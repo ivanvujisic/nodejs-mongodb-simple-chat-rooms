@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{{ title }}</title>
+    <link rel='stylesheet' href='/stylesheets/style.css' />
+  </head>
+  <body style="text-align:center">
+    <h1>Welcome to Demio Developer test</h1>
+
+    <div>
+	<h2>Please choose room</h2>
+	<h2>
+        <ul style="padding-left:1em;list-style:none;">
+          {{#rooms}}
+          <li><a href="/join?room={{.}}">Room #{{.}}</a></li>
+          {{/rooms}}
+	</ul>
+	</h2>
+    </div>
+
+  </body>
+</html>

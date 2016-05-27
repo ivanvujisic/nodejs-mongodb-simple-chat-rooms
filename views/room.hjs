@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Room #{{ room }}</title>
+    <link rel='stylesheet' href='/stylesheets/style.css' />
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.2/jquery.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+	if('{{room}}' == '') location.href ='/';
+
+        var socket = io();
+        socket.emit("joinRoom", '{{ username}}', '{{room}}');
+
+        socket.on("new-user-joined", function(name, room) {
+           if(room=='{{room}}'){
+                $('.leftside-bar ul').append('<li><a href="#" id="'+name+'">'+name+'</a></li>');
+           }
+        });
+
+	socket.on("user-left-room", function(room, name) {
+	   if(room=='{{room}}'){
+		console.log('User "'+name + '" disconnected');
+		$('#'+name).parent().remove();
+	   }
+        });
+
+        socket.on("message", function(msg,room) {
+           if(room=='{{room}}'){
+		$('.chat-panel').append(msg+"\n");
+		$('.chat-panel').scrollTop($('.chat-panel')[0].scrollHeight);
+           }
+        });
+
+	socket.on('game', function(gameQ) {
+                $('.chat-panel').append(gameQ+"\n");
+		$('.chat-panel').scrollTop($('.chat-panel')[0].scrollHeight);
+        });
+
+
+	window.onbeforeunload = function() {
+	   socket.emit('disconnect');
+	};
+
+	var waitasec = false;
+	function sendmsg(msg){
+	   if(waitasec){
+		alert('One message per second, please!!!');
+		return;
+	   }
+
+	   $('.chat-panel').append("Me: "+msg+"\n");
+	   $('.msg-input-box').val("");
+	   $('.chat-panel').scrollTop($('.chat-panel')[0].scrollHeight);
+
+	   socket.emit('message','{{username}}',msg,'{{room}}');
+	
+	   waitasec = true;
+	   setTimeout(function(){ waitasec = false; },1000);
+	}
+
+	$(document).ready( function (){
+	   $(".msg-input-box").keydown(function(e){ 
+		if(e.which==13){
+		    e.preventDefault();
+		    sendmsg($(this).val());
+		}
+	   });
+	});
+    </script>
+  </head>
+  <body>
+    <div class="top-bar">
+        <h1>User {{ username }} <span class="top-bar-room-no">Room #{{ room }}<span></h1>
+    </div>
+
+    <div class="leftside-bar">
+	<div class="roomsList-title">Room #{{room}} - who's online</div>
+        <ul>
+          {{#roomUsers}}
+          <li><a href="#" id="{{.}}">{{.}}</a></li>
+          {{/roomUsers}}
+    </div>
+    <textarea class="chat-panel"></textarea>
+    <input type="text" class="msg-input-box" placeholder="Type your message here ..." />
+    <input type="button" class="sendmsg" value="Send" onclick="sendmsg($('.msg-input-box').val());" />
+  </body>
+</html>
+

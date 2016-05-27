@@ -1,0 +1,297 @@
+#!/usr/bin/env node
+
+
+const numberOfUsersPerRoomToTriggerGame = 3;
+const newGameTimeInterval = 10;
+const questionsPerGame = 2;
+
+
+
+/**
+ * Module dependencies.
+ */
+
+/*
+var app = require('../app');
+var debug = require('debug')('app:server');
+var http = require('http');
+*/
+
+
+var app = require('../app');
+var debug = require('debug')('app:server');
+var http = require('http');
+
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || process.argv[2] || '3000');
+app.set('port', port);
+console.log('listening port:'+port);
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+var io = require('../node_modules/socket.io')(server);
+
+
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
+
+/**
+ * Socket handler
+ */
+var MongoClient = require('../node_modules/mongodb').MongoClient;
+var mongoURI = "mongodb://localhost:27017/express";
+var roomUsers = [];
+var game = [];
+var userSetTimeoutId = [];
+var roomUsersNum = [];
+
+
+io.sockets.on('connection', function(socket){
+
+
+  socket.on("joinRoom", function(name, roomToJoinTo) {
+
+     MongoClient.connect(mongoURI, function(err, db) {
+        if(err) { return console.dir(err); }
+
+	db.collection('rooms').update({"_id":roomToJoinTo},{$push:{"users": name}},{upsert:true});
+
+	var stream = db.collection('rooms').find({"_id": roomToJoinTo },{users: 1});
+        stream.on("data", function(item) {
+	   roomUsers[socket.id] = {"name" : name, "inroom": roomToJoinTo};
+
+	   console.log('--------------> User ' + name +' has joined room ' + roomToJoinTo);
+
+           var roomUsersCount = Object.keys(item.users).length;
+	   console.log('roomUsersCount: %s', roomUsersCount);
+
+	   if(roomUsersCount >= numberOfUsersPerRoomToTriggerGame){
+		startGameForAll(roomToJoinTo, item.users);
+		console.log('GAME STARTED room %s', roomToJoinTo);
+	   }
+
+	   io.emit('joined',JSON.stringify(item.users));
+	   console.log('new-user-joined name: %s roomToJoinTo: %s', name, roomToJoinTo);
+	   socket.broadcast.emit('new-user-joined', name, roomToJoinTo);
+        });
+    });
+  });
+
+
+
+  socket.on("message", function(user,msg, room) {
+	if( Object.keys(game).length === 0 || typeof game[room] === 'undefined'){     // || game[room][user] === 'undefined'){
+	      socket.broadcast.emit('message',user+": " + msg, room);
+	}else if(typeof game[room][user] !== 'undefined' && !game[room][user]['status'] && !game[room][user]['lock']){
+	   for(var key in roomUsers){
+	      if(roomUsers[key].name == user) continue;
+	      console.log('game[room][' + roomUsers[key].name + '] = %s', game[room][roomUsers[key].name]);
+	      if(roomUsers[key].name=='' || typeof game[room][roomUsers[key].name] === 'undefined') continue;
+
+	      if(typeof game[room][roomUsers[key].name] !== 'undefined' && game[room][roomUsers[key].name]['status'] == 0){
+		currUserSocketId = findKey(roomUsers, roomUsers[key].name);
+		console.log('---------> EMIT TO USERS WHO COMPLETED GAME: %s', currUserSocketId);
+
+		io.to(currUserSocketId).emit('message',user+": " + msg, room);
+	      }
+	   }
+	   chatHistorySaveMsg(user+": " + msg, room);
+	}else if(typeof game[room][user] !== 'undefined'  && game[room][user]['lock']){
+	   io.to(socket.id).emit('game', 'Last answer was incorrect, told ya - this chat is locked for you.\n');
+	}else{
+	   if(typeof game[room][user] === 'undefined'){
+		this.statusCode = 302;
+		this.setHeader('Location', '/');
+		this.end();
+	   }
+
+	   gameFeedback = (msg==game[room][user]['question'].answer)?"Correct":"Incorrect, chat is locked - bye bye!";
+	   game[room][user]['status'] =  gameFeedback == "Correct" ? game[room][user]['status']-1 : game[room][user]['status'];
+	   game[room][user]['lock'] = gameFeedback == 'Correct' ? false : true;
+	   //gameFeedback += (!game[room][user]['status']) ? ", thank you very much - chat is unlocked :)\n" : '';  
+
+	   if(!game[room][user]['status']){
+		gameFeedback += ", thank you very much - chat is unlocked :)\n";
+		gameFeedback += "Oh, almost forgot, if " + numberOfUsersPerRoomToTriggerGame + " or more users are still active in " + newGameTimeInterval + " seconds, game will start over and over again.";
+
+		userSetTimeoutId[user] = setTimeout(function(){
+					roomUsersNum[room] = Object.keys(game[room]).length;
+		   			if(roomUsersNum[room] >= numberOfUsersPerRoomToTriggerGame){
+						console.log('Starting game for user ' + user);
+						startGameForUser(room, user);
+		   			}else{
+						console.log('Clearing timeout %o', userSetTimeoutId[user]);
+						clearTimeout(userSetTimeoutId[user]);
+					}
+		}, 1000*newGameTimeInterval);
+
+	   }
+
+
+	   console.log('USUAL EMIT: socket.id %s', socket.id);
+	   io.to(socket.id).emit('game', gameFeedback + "\n");
+
+	   if(gameFeedback=='Correct' && game[room][user]['status']) gameNextQuestion(room,user);
+	}
+  });
+
+
+  socket.on('disconnect', function(){
+	if(typeof roomUsers[socket.id] !== 'undefined'){
+	    io.emit('user-left-room', roomUsers[socket.id].inroom, roomUsers[socket.id].name);
+	    //delete game[roomUsers[socket.id].inroom][roomUsers[socket.id].name];
+	    sessionDel(roomUsers[socket.id].inroom, roomUsers[socket.id].name);
+	}
+  });
+
+});
+
+
+
+
+
+function sessionDel(room,user){
+     MongoClient.connect(mongoURI, function(err, db) {
+        if(err) { return console.dir(err); }
+
+	console.log('User %s disconnected from room #%s',user,room);
+        db.collection('rooms').update({"_id":room},{$pull:{"users": user}},{upsert:true});
+        db.collection('sessions').remove({"session": new RegExp('\\\"username\\\":\\\"' + user + '\\\",\\\"room\\\":\\\"' + room + '\\\"')});
+     });
+}
+
+function chatHistorySaveMsg(msg,room){
+     MongoClient.connect(mongoURI, function(err, db) {
+        if(err) { return console.dir(err); }
+
+        db.collection('rooms').update({"_id": room},{$push:{"chat-history": msg}},{upsert:true});
+	console.log('db.rooms.update({"_id": ' + room + '},{$push:{"chat-history": "' + msg + '"}},{upsert:true})');
+     });
+}
+
+function startGameForAll(room,users){
+        for(var user in users){
+           if(typeof game[room] === 'undefined'){ game[room] = []; }
+           if(typeof game[room][users[user]] === 'undefined'){ game[room][users[user]] = []; }
+           if(game[room][users[user]]['status'] > 0) continue;
+
+           game[room][users[user]]['status'] = questionsPerGame;
+           game[room][users[user]]['lock'] = false;
+
+           gameNextQuestion(room, users[user]);
+        }
+        console.log("game[room] number of users:%d", Object.keys(game[room]).length);
+}
+
+function startGameForUser(room, user){
+           if(typeof game[room] === 'undefined'){ game[room] = []; }
+           if(typeof game[room][user] === 'undefined'){ game[room][user] = []; }
+
+           game[room][user]['status'] = questionsPerGame;
+           game[room][user]['lock'] = false;
+
+           gameNextQuestion(room, user);
+}
+
+function gameNextQuestion(room,user){
+        thisUserSocketId = findKey(roomUsers, user);
+
+        if( game[room][user]['status'] == questionsPerGame){
+           io.to(thisUserSocketId).emit('game', " ");
+           io.to(thisUserSocketId).emit('game', "+------------------------------------------------------------+");
+           io.to(thisUserSocketId).emit('game', "| Third user just entered the room, so let's the game start. |");
+           io.to(thisUserSocketId).emit('game', "| Please answer next " + questionsPerGame + " questions in order to unlock chat.     |");
+           io.to(thisUserSocketId).emit('game', "+------------------------------------------------------------+");
+           io.to(thisUserSocketId).emit('game', " ");
+        }
+
+        var num1 = Math.floor((Math.random() * 10) + 1);
+        var num2 = Math.floor((Math.random() * 10) + 1);
+        game[room][user]['question'] = {'text': num1 + '+' + num2 + '=?', 'answer': num1+num2};
+
+        //console.log('function gameNextQuestion ---> game[room][user]: %o', game[room][user]);
+
+        io.to(thisUserSocketId).emit('game', 'Question: ' + game[room][user]['question'].text)
+}
+
+function findKey(arr,propValue){
+        for(var key in arr)
+           if(arr[key].name == propValue) return key;
+
+        return false;
+}
+
+
