@@ -11,13 +11,6 @@ const questionsPerGame = 2;
  * Module dependencies.
  */
 
-/*
-var app = require('../app');
-var debug = require('debug')('app:server');
-var http = require('http');
-*/
-
-
 var app = require('../app');
 var debug = require('debug')('app:server');
 var http = require('http');
@@ -121,8 +114,7 @@ var roomUsersNum = [];
 
 io.sockets.on('connection', function(socket){
 
-
-  socket.on("joinRoom", function(name, roomToJoinTo) {
+  socket.on("joinRoom", function(name, roomToJoinTo, newRoom) {
 
      MongoClient.connect(mongoURI, function(err, db) {
         if(err) { return console.dir(err); }
@@ -133,19 +125,21 @@ io.sockets.on('connection', function(socket){
         stream.on("data", function(item) {
 	   roomUsers[socket.id] = {"name" : name, "inroom": roomToJoinTo};
 
-	   console.log('--------------> User ' + name +' has joined room ' + roomToJoinTo);
+	   //console.log('--------------> User ' + name +' has joined room ' + roomToJoinTo);
 
            var roomUsersCount = Object.keys(item.users).length;
-	   console.log('roomUsersCount: %s', roomUsersCount);
+	   //console.log('roomUsersCount: %s', roomUsersCount);
 
 	   if(roomUsersCount >= numberOfUsersPerRoomToTriggerGame){
 		startGameForAll(roomToJoinTo, item.users);
-		console.log('GAME STARTED room %s', roomToJoinTo);
+		//console.log('GAME STARTED room %s', roomToJoinTo);
 	   }
 
 	   io.emit('joined',JSON.stringify(item.users));
-	   console.log('new-user-joined name: %s roomToJoinTo: %s', name, roomToJoinTo);
+	   //console.log('new-user-joined name: %s roomToJoinTo: %s', name, roomToJoinTo);
 	   socket.broadcast.emit('new-user-joined', name, roomToJoinTo);
+	   //console.log('=========> newRoomCreated:|%s|', newRoom);
+	   if(newRoom) socket.broadcast.emit('new-room-created', roomToJoinTo);
         });
     });
   });
@@ -153,18 +147,18 @@ io.sockets.on('connection', function(socket){
 
 
   socket.on("message", function(user,msg, room) {
-	if( Object.keys(game).length === 0 || typeof game[room] === 'undefined'){     // || game[room][user] === 'undefined'){
+	if( Object.keys(game).length === 0 || typeof game[room] === 'undefined'){
 	      socket.broadcast.emit('message',user+": " + msg, room);
+	      chatHistorySaveMsg(user+": " + msg, room);
 	}else if(typeof game[room][user] !== 'undefined' && !game[room][user]['status'] && !game[room][user]['lock']){
 	   for(var key in roomUsers){
 	      if(roomUsers[key].name == user) continue;
-	      console.log('game[room][' + roomUsers[key].name + '] = %s', game[room][roomUsers[key].name]);
+	      //console.log('game[room][' + roomUsers[key].name + '] = %s', game[room][roomUsers[key].name]);
 	      if(roomUsers[key].name=='' || typeof game[room][roomUsers[key].name] === 'undefined') continue;
 
 	      if(typeof game[room][roomUsers[key].name] !== 'undefined' && game[room][roomUsers[key].name]['status'] == 0){
 		currUserSocketId = findKey(roomUsers, roomUsers[key].name);
-		console.log('---------> EMIT TO USERS WHO COMPLETED GAME: %s', currUserSocketId);
-
+		//console.log('---------> EMIT TO USERS WHO COMPLETED GAME: %s', currUserSocketId);
 		io.to(currUserSocketId).emit('message',user+": " + msg, room);
 	      }
 	   }
@@ -173,41 +167,74 @@ io.sockets.on('connection', function(socket){
 	   io.to(socket.id).emit('game', 'Last answer was incorrect, told ya - this chat is locked for you.\n');
 	}else{
 	   if(typeof game[room][user] === 'undefined'){
-		this.statusCode = 302;
-		this.setHeader('Location', '/');
-		this.end();
-	   }
+		io.to(socket.id).emit('redirect', '/');
+	   }else{
 
-	   gameFeedback = (msg==game[room][user]['question'].answer)?"Correct":"Incorrect, chat is locked - bye bye!";
-	   game[room][user]['status'] =  gameFeedback == "Correct" ? game[room][user]['status']-1 : game[room][user]['status'];
-	   game[room][user]['lock'] = gameFeedback == 'Correct' ? false : true;
-	   //gameFeedback += (!game[room][user]['status']) ? ", thank you very much - chat is unlocked :)\n" : '';  
+	      gameFeedback = (msg==game[room][user]['question'].answer)?"Correct":"Incorrect, chat is locked - bye bye!";
+	      game[room][user]['status'] =  gameFeedback == "Correct" ? game[room][user]['status']-1 : game[room][user]['status'];
+	      game[room][user]['lock'] = gameFeedback == 'Correct' ? false : true;
 
-	   if(!game[room][user]['status']){
+	      if(!game[room][user]['status']){
 		gameFeedback += ", thank you very much - chat is unlocked :)\n";
 		gameFeedback += "Oh, almost forgot, if " + numberOfUsersPerRoomToTriggerGame + " or more users are still active in " + newGameTimeInterval + " seconds, game will start over and over again.";
 
 		userSetTimeoutId[user] = setTimeout(function(){
 					roomUsersNum[room] = Object.keys(game[room]).length;
 		   			if(roomUsersNum[room] >= numberOfUsersPerRoomToTriggerGame){
-						console.log('Starting game for user ' + user);
+						//console.log('Starting game for user ' + user);
 						startGameForUser(room, user);
 		   			}else{
-						console.log('Clearing timeout %o', userSetTimeoutId[user]);
+						//console.log('Clearing timeout %o', userSetTimeoutId[user]);
 						clearTimeout(userSetTimeoutId[user]);
 					}
 		}, 1000*newGameTimeInterval);
 
+	      }
+
+
+	      //console.log('USUAL EMIT: socket.id %s', socket.id);
+	      io.to(socket.id).emit('game', gameFeedback + "\n");
+
+	      if(gameFeedback=='Correct' && game[room][user]['status']) gameNextQuestion(room,user);
 	   }
-
-
-	   console.log('USUAL EMIT: socket.id %s', socket.id);
-	   io.to(socket.id).emit('game', gameFeedback + "\n");
-
-	   if(gameFeedback=='Correct' && game[room][user]['status']) gameNextQuestion(room,user);
 	}
   });
 
+  socket.on('get-history', function (){
+	   MongoClient.connect(mongoURI, function(err, db) {
+		if(err) { return console.dir(err); }
+
+		if(typeof roomUsers[socket.id] === 'undefined'){
+			io.to(socket.id).emit('redirect', '/');
+		}else{
+			var chatHistoryStream = db.collection("rooms").find({"_id": roomUsers[socket.id].inroom},{"chat-history":1});
+			var chatHistory = [];
+			chatHistoryStream.on("data", function (item) {
+			   var itemStr = JSON.stringify(item);
+
+			   console.log('item: %o',item);
+
+			   var itemStrTmp = itemStr.replace(/chat\-history/, 'chatHistory');
+			   if(itemStrTmp.match(/chatHistory/g)){
+
+			   	var replaceUsernameWithMe = roomUsers[socket.id].name + ':';
+
+			   	console.log('MY NAME: %s', replaceUsernameWithMe);
+
+			   	var itemStrTmp2 = itemStrTmp.replace(new RegExp(replaceUsernameWithMe), 'Me:');
+			   	var roomHistoryArr = JSON.parse(itemStrTmp2).chatHistory;
+			   	var roomHistoryStr = roomHistoryArr.join("\n") + "\n";
+			   	console.log("chat history item:\n %s", roomHistoryStr);
+
+			   	io.to(socket.id).emit('update-history', roomHistoryStr);
+			   }
+			});
+		}
+	
+	   });
+
+
+  });
 
   socket.on('disconnect', function(){
 	if(typeof roomUsers[socket.id] !== 'undefined'){
@@ -234,11 +261,11 @@ function sessionDel(room,user){
 }
 
 function chatHistorySaveMsg(msg,room){
+     console.log("Write to history --> room:%s, msg:%s", room, msg);
      MongoClient.connect(mongoURI, function(err, db) {
         if(err) { return console.dir(err); }
 
         db.collection('rooms').update({"_id": room},{$push:{"chat-history": msg}},{upsert:true});
-	console.log('db.rooms.update({"_id": ' + room + '},{$push:{"chat-history": "' + msg + '"}},{upsert:true})');
      });
 }
 
@@ -281,8 +308,6 @@ function gameNextQuestion(room,user){
         var num1 = Math.floor((Math.random() * 10) + 1);
         var num2 = Math.floor((Math.random() * 10) + 1);
         game[room][user]['question'] = {'text': num1 + '+' + num2 + '=?', 'answer': num1+num2};
-
-        //console.log('function gameNextQuestion ---> game[room][user]: %o', game[room][user]);
 
         io.to(thisUserSocketId).emit('game', 'Question: ' + game[room][user]['question'].text)
 }
