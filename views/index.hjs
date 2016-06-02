@@ -5,7 +5,7 @@
     <link rel='stylesheet' href='/stylesheets/style.css' />
   </head>
   <body style="text-align:center">
-    <h1>Welcome to Demio Developer test</h1>
+    <h1>Welcome to Chat room test</h1>
 
     <div>
 	<h2>Please choose room</h2>

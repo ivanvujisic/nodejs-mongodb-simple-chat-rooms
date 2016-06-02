@@ -12,9 +12,7 @@ router.get('/', function(req, res, next) {
 	var stream = db.collection('rooms').find({},{_id:1})
 
         stream.on("data", function(item) {
-	   console.log('item %o', item);
-           roomsList.push(item._id);
-	   console.log('roomsList %o', roomsList);
+           if(item._id != '') roomsList.push(item._id);
         });
 
         stream.on("end", function() {

@@ -6,16 +6,24 @@ var MongoClient = require('mongodb').MongoClient;
 router.get('/', function(req, res, next) {
    var room = req.session.room;
    var username = req.session.username;
+   var roomsList = [];
+   var roomUsers = [];
+   var newRoomCreated = true;
 
    var mongoURI = "mongodb://localhost:27017/express";
 
    MongoClient.connect(mongoURI, function(err, db) {
 	if(err) { return console.dir(err); }
 
+
+	var roomsStream = db.collection('rooms').find();
+	roomsStream.on("data", function(item) {
+           if(item._id != '' && item._id != room) roomsList.push( item._id );
+	   if(item._id == room) newRoomCreated = false;
+        });
+
 	var roomRegex = '\\\"room\\\":\\\"' + room + '\\\"';
 	var stream = db.collection('sessions').find({"session": new RegExp( roomRegex )},{session: 1});
-
-	var roomUsers = [];
 
 	stream.on("data", function(item) {
            var roomUser = JSON.parse(item.session).username;
@@ -23,9 +31,9 @@ router.get('/', function(req, res, next) {
 	});
 
 	stream.on("end", function() {
-           //console.log('roomUsers %o', roomUsers);
-	   res.render('room', { room: room, username: username, roomUsers: roomUsers });
+           res.render('room', { room: room, username: username, roomUsers: roomUsers, roomsList: roomsList, newRoom: newRoomCreated });
 	});
+
    });
 
 });

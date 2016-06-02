@@ -9,11 +9,11 @@
 	if('{{room}}' == '') location.href ='/';
 
         var socket = io();
-        socket.emit("joinRoom", '{{ username}}', '{{room}}');
+        socket.emit("joinRoom", '{{ username}}', '{{room}}', {{newRoom}});
 
         socket.on("new-user-joined", function(name, room) {
            if(room=='{{room}}'){
-                $('.leftside-bar ul').append('<li><a href="#" id="'+name+'">'+name+'</a></li>');
+                $('.leftside-bar ul.whosonline').append('<li><a href="#" id="'+name+'">'+name+'</a></li>');
            }
         });
 
@@ -36,6 +36,20 @@
 		$('.chat-panel').scrollTop($('.chat-panel')[0].scrollHeight);
         });
 
+	socket.on('update-history', function(history) {
+		console.log(history);
+		$('.chat-panel').html(history);
+		$('.chat-panel').scrollTop($('.chat-panel')[0].scrollHeight);
+	});
+
+	socket.on('new-room-created', function (roomNo) {
+		console.log('new-room-created room%d', roomNo);
+		$('.roomslist').append('<li><a href="/join?room='+roomNo+'">#'+roomNo+'</a></li>');	
+	});
+
+	socket.on('redirect', function(href) {
+		location.href = href;
+	});
 
 	window.onbeforeunload = function() {
 	   socket.emit('disconnect');
@@ -58,6 +72,7 @@
 	   setTimeout(function(){ waitasec = false; },1000);
 	}
 
+
 	$(document).ready( function (){
 	   $(".msg-input-box").keydown(function(e){ 
 		if(e.which==13){
@@ -66,6 +81,7 @@
 		}
 	   });
 	});
+
     </script>
   </head>
   <body>
@@ -75,14 +91,27 @@
 
     <div class="leftside-bar">
 	<div class="roomsList-title">Room #{{room}} - who's online</div>
-        <ul>
-          {{#roomUsers}}
-          <li><a href="#" id="{{.}}">{{.}}</a></li>
-          {{/roomUsers}}
+	<ul class="whosonline">
+		{{#roomUsers}}
+          	<li><a href="#" id="{{.}}">{{.}}</a></li>
+          	{{/roomUsers}}
+	</ul>
+	<br />
+	<br />
+	<br />
+	<br />
+	<div class="roomsList-title">Switch to room:</div>
+        <ul class="roomslist">
+                {{#roomsList}}
+                <li><a href="/join?room={{.}}">#{{.}}</a></li>
+                {{/roomsList}}
+         </ul>
     </div>
     <textarea class="chat-panel"></textarea>
     <input type="text" class="msg-input-box" placeholder="Type your message here ..." />
     <input type="button" class="sendmsg" value="Send" onclick="sendmsg($('.msg-input-box').val());" />
+    <br />
+    <input type="button" class="gethist" value="Fetch Chat History" onclick="socket.emit('get-history');" />
   </body>
 </html>
 
